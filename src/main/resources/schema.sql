@@ -1,1 +1,6 @@
-create table  if not exists customer( ids serial primary key  , name varchar(255) not null) ;
+drop table if exists  customer ;
+create table   customer
+(
+    id   serial primary key,
+    name varchar(255) not null
+);
