@@ -34,3 +34,9 @@ You can login to each instance like this:
 ```shell 
 PGPASSWORD=pw psql -U user -h localhost -p 5431 user 
 ```
+
+This program will write some sample data into each `DataSource` and make it available at `http://localhost:8080/customers`. You'll need to authenticate when you make the request using HTTP BASIC authentication. For example:
+
+```shell 
+curl -U jlong:pw http://localhost:8080/customers
+```
