@@ -18,23 +18,33 @@ import org.springframework.jdbc.core.SqlParameter;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.jdbc.datasource.lookup.AbstractRoutingDataSource;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.servlet.function.RouterFunction;
+import org.springframework.web.servlet.function.ServerResponse;
 
 import javax.sql.DataSource;
 import java.sql.Types;
-import java.util.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static org.springframework.security.config.Customizer.withDefaults;
+import static org.springframework.web.servlet.function.RouterFunctions.route;
 
 /**
  * todo demonstrate authentication that delegates to a sql db by partition
@@ -49,19 +59,24 @@ public class MultitenantSqlApplication {
     }
 
     @Bean
-    ApplicationRunner runner( SecurityConfiguration configuration ,CustomerService customerService) {
+    ApplicationRunner runner(SecurityConfiguration configuration, CustomerService customerService) {
         return args -> {
-
-            System.out.println("----------");
-            configuration.login("jlong", "pw");
-            Stream.of("Rob", "Yuxin", "Tasha", "Mark", "Olga", "Violetta", "Illaya", "Sabby").forEach(customerService::create);
-            customerService.findAll().forEach(System.out::println);
-
-            System.out.println("----------");
-            configuration.login("rwinch", "pw");
-            Stream.of("Rod", "Dave", "Jürgen").forEach(customerService::create);
-            customerService.findAll().forEach(System.out::println);
+            var data = Map.of(
+                    "jlong", List.of("Rob", "Yuxin", "Tasha", "Mark", "Olga", "Violetta", "Illaya", "Sabby"),
+                    "rwinch", List.of("Rod", "Dave", "Jürgen")
+            );
+            data.forEach((user, customers) -> {
+                configuration.login(user, "pw");
+                customers.forEach(customerService::create);
+            });
         };
+    }
+
+    @Bean
+    RouterFunction<ServerResponse> http(CustomerService customerService) {
+        return route()
+                .GET("/customers", request -> ServerResponse.ok().body(customerService.findAll()))
+                .build();
     }
 
 
@@ -72,6 +87,14 @@ class SecurityConfiguration {
 
     private final Map<String, MultitenantUser> users = new ConcurrentHashMap<>();
 
+    @Bean
+    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        return http
+                .authorizeHttpRequests(authz -> authz.anyRequest().authenticated())
+                .httpBasic(withDefaults())
+                .build();
+    }
+
 
     void login(String username, String password) {
         var auth = new MultitenantAuthentication(username, password, this.users.get(username));
@@ -80,8 +103,8 @@ class SecurityConfiguration {
 
     @Bean
     UserDetailsService userDetailsService() {
-        var rob = this.user("rwinch", "pw", 1, "USER", "ADMIN");
-        var josh = this.user("jlong", "pw", 2, "USER");
+        var rob = this.user("rwinch", "pw", 1);
+        var josh = this.user("jlong", "pw", 2);
         this.users.putAll(Stream.of(josh, rob).collect(Collectors.toMap(User::getUsername, user -> (MultitenantUser) user)));
         return username -> {
             var user = this.users.getOrDefault(username, null);
@@ -90,9 +113,8 @@ class SecurityConfiguration {
         };
     }
 
-    private User user(String user, String pw, Integer tenantId, String... roles) {
-        var auths = Arrays.stream(roles).map(SimpleGrantedAuthority::new).toList();
-        return new MultitenantUser(user, pw, true, true, true, true, auths, tenantId);
+    private User user(String user, String pw, Integer tenantId) {
+        return new MultitenantUser(user, pw, true, true, true, true, List.of(new SimpleGrantedAuthority("USER")), tenantId);
     }
 
 }
