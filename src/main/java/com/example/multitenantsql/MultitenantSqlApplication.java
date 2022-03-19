@@ -26,7 +26,6 @@ import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.function.RouterFunction;
@@ -48,7 +47,6 @@ import static org.springframework.web.servlet.function.RouterFunctions.route;
 
 /**
  * todo demonstrate authentication that delegates to a sql db by partition
- * <p>
  * before running this, you'll need to spin up some Postgres instances on two different ports. I'm using `5432` and `5431`.
  */
 @SpringBootApplication
@@ -59,27 +57,11 @@ public class MultitenantSqlApplication {
     }
 
     @Bean
-    ApplicationRunner runner(SecurityConfiguration configuration, CustomerService customerService) {
-        return args -> {
-            var data = Map.of(
-                    "jlong", List.of("Rob", "Yuxin", "Tasha", "Mark", "Olga", "Violetta", "Illaya", "Sabby"),
-                    "rwinch", List.of("Rod", "Dave", "Jürgen")
-            );
-            data.forEach((user, customers) -> {
-                configuration.login(user, "pw");
-                customers.forEach(customerService::create);
-            });
-        };
-    }
-
-    @Bean
     RouterFunction<ServerResponse> http(CustomerService customerService) {
         return route()
                 .GET("/customers", request -> ServerResponse.ok().body(customerService.findAll()))
                 .build();
     }
-
-
 }
 
 @Configuration
@@ -88,23 +70,17 @@ class SecurityConfiguration {
     private final Map<String, MultitenantUser> users = new ConcurrentHashMap<>();
 
     @Bean
-    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
                 .authorizeHttpRequests(authz -> authz.anyRequest().authenticated())
                 .httpBasic(withDefaults())
                 .build();
     }
 
-
-    void login(String username, String password) {
-        var auth = new MultitenantAuthentication(username, password, this.users.get(username));
-        SecurityContextHolder.getContext().setAuthentication(auth);
-    }
-
     @Bean
     UserDetailsService userDetailsService() {
-        var rob = this.user("rwinch", "pw", 1);
-        var josh = this.user("jlong", "pw", 2);
+        var rob = this.user("rwinch", "{noop}pw", 1);
+        var josh = this.user("jlong", "{noop}pw", 2);
         this.users.putAll(Stream.of(josh, rob).collect(Collectors.toMap(User::getUsername, user -> (MultitenantUser) user)));
         return username -> {
             var user = this.users.getOrDefault(username, null);
@@ -117,37 +93,23 @@ class SecurityConfiguration {
         return new MultitenantUser(user, pw, true, true, true, true, List.of(new SimpleGrantedAuthority("USER")), tenantId);
     }
 
-}
+    static class MultitenantUser extends User {
 
-class MultitenantAuthentication extends PreAuthenticatedAuthenticationToken {
+        private final Integer tenantId;
 
-    private final MultitenantUser user;
+        public Integer getTenantId() {
+            return tenantId;
+        }
 
-    public MultitenantAuthentication(Object aPrincipal, Object aCredentials, MultitenantUser user) {
-        super(aPrincipal, aCredentials);
-        this.user = user;
-    }
-
-    public MultitenantUser getUser() {
-        return user;
-    }
-}
-
-class MultitenantUser extends User {
-
-    private final Integer tenantId;
-
-    public Integer getTenantId() {
-        return tenantId;
-    }
-
-    public MultitenantUser(String username, String password, boolean enabled, boolean accountNonExpired,
-                           boolean credentialsNonExpired, boolean accountNonLocked,
-                           Collection<? extends GrantedAuthority> authorities, Integer tenantId) {
-        super(username, password, enabled, accountNonExpired, credentialsNonExpired, accountNonLocked, authorities);
-        this.tenantId = tenantId;
+        public MultitenantUser(String username, String password, boolean enabled, boolean accountNonExpired,
+                               boolean credentialsNonExpired, boolean accountNonLocked,
+                               Collection<? extends GrantedAuthority> authorities, Integer tenantId) {
+            super(username, password, enabled, accountNonExpired, credentialsNonExpired, accountNonLocked, authorities);
+            this.tenantId = tenantId;
+        }
     }
 }
+
 
 @Configuration
 class DataSourceConfiguration {
@@ -176,7 +138,7 @@ class DataSourceConfiguration {
 
     @Bean
     @Primary
-    MultitenantRoutingDataSource routingDataSource() {
+    MultitenantRoutingDataSource multitenantDataSource() {
         var mds = new MultitenantRoutingDataSource();
         mds.setTargetDataSources(this.dataSources);
         return mds;
@@ -206,38 +168,53 @@ class DataSourceConfiguration {
         return dataSource;
     }
 
-
-}
-
-
-class MultitenantRoutingDataSource extends AbstractRoutingDataSource {
-
-    private final AtomicBoolean initialized = new AtomicBoolean();
-
-    @Override
-    protected DataSource determineTargetDataSource() {
-        if (this.initialized.compareAndSet(false, true))
-            this.afterPropertiesSet();
-
-        return super.determineTargetDataSource();
+    @Bean
+    ApplicationRunner sampleDataInitializer(Map<String, DataSource> dataSourceMap) {
+        return args -> {
+            var data = Map.of(
+                    "ds1", List.of("Rod", "Dave", "Jürgen"),
+                    "ds2", List.of("Rob", "Yuxin", "Tasha", "Mark", "Olga", "Violetta", "Illaya", "Sabby")
+            );
+            data.forEach((dbBeanName, customers) -> {
+                var db = dataSourceMap.get(dbBeanName);
+                var cs = new CustomerService(new JdbcTemplate(db));
+                customers.forEach(cs::create);
+            });
+        };
     }
 
-    @Override
-    protected Object determineCurrentLookupKey() {
-        var auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth instanceof MultitenantAuthentication user) {
-            var tenantId = user.getUser().getTenantId();
-            System.out.println("  " + user.getUser().getUsername() + " / " + tenantId);
-            return tenantId;
+
+    static private class MultitenantRoutingDataSource extends AbstractRoutingDataSource {
+
+        private final AtomicBoolean initialized = new AtomicBoolean();
+
+        @Override
+        protected DataSource determineTargetDataSource() {
+            if (this.initialized.compareAndSet(false, true))
+                this.afterPropertiesSet();
+            return super.determineTargetDataSource();
         }
-        return null;
+
+        @Override
+        protected Object determineCurrentLookupKey() {
+            var auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth.getPrincipal() instanceof SecurityConfiguration.MultitenantUser user) {
+                var tenantId = user.getTenantId();
+                System.out.println("  " + user.getUsername() + " / " + tenantId);
+                return tenantId;
+            }
+            return null;
+        }
     }
+
 }
 
 
 @Service
 class CustomerService {
 
+    private final RowMapper<Customer> customerRowMapper =
+            (rs, rowNum) -> new Customer(rs.getInt("id"), rs.getString("name"));
     private final JdbcTemplate template;
 
     CustomerService(JdbcTemplate template) {
@@ -270,9 +247,6 @@ class CustomerService {
     Collection<Customer> findAll() {
         return this.template.query("select * from customer", this.customerRowMapper);
     }
-
-    private final RowMapper<Customer> customerRowMapper =
-            (rs, rowNum) -> new Customer(rs.getInt("id"), rs.getString("name"));
 
 }
 
