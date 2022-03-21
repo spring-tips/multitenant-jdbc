@@ -118,12 +118,7 @@ class DataSourceConfiguration {
                 .entrySet()
                 .stream()
                 .filter(e -> e.getKey().startsWith(prefix))
-                .collect(Collectors.toMap(e -> {
-                    var k = e.getKey();
-                    var part = k.substring(prefix.length());
-                    var num = Integer.parseInt(part);
-                    return (Object) num;
-                }, e -> (Object) e.getValue()));
+                .collect(Collectors.toMap(e -> (Object) Integer.parseInt(e.getKey().substring(prefix.length())), e -> (Object) e.getValue()));
         map.forEach((tenantId, ds) -> {
             var initializer = new ResourceDatabasePopulator(
                     new ClassPathResource("schema.sql"),
