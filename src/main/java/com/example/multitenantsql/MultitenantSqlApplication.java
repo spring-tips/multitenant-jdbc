@@ -35,10 +35,7 @@ import java.util.stream.Stream;
 import static org.springframework.security.config.Customizer.withDefaults;
 import static org.springframework.web.servlet.function.RouterFunctions.route;
 
-/**
- * todo demonstrate authentication that delegates to a sql db by partition
- * before running this, you'll need to spin up some Postgres instances on two different ports. I'm using `5432` and `5431`.
- */
+
 @SpringBootApplication
 public class MultitenantSqlApplication {
 
@@ -111,7 +108,6 @@ class SecurityConfiguration {
 @Configuration
 class DataSourceConfiguration {
 
-
     @Bean
     @Primary
     MultitenantDataSource multitenantDataSource(Map<String, DataSource> dataSources) {
@@ -131,9 +127,7 @@ class DataSourceConfiguration {
                     new ClassPathResource("schema.sql"),
                     new ClassPathResource(prefix + tenantId + "-data.sql"));
             initializer.execute((DataSource) ds);
-            System.out.println("initialized " + tenantId);
         });
-        System.out.println("there are " + map.size() + " dataSources");
         var mds = new MultitenantDataSource();
         mds.setTargetDataSources(map);
         return mds;
@@ -141,15 +135,15 @@ class DataSourceConfiguration {
 
     @Bean
     DataSource ds1() {
-        return createNewDataSource(5431);
+        return createNewDataSourceForPort(5431);
     }
 
     @Bean
     DataSource ds2() {
-        return createNewDataSource(5432);
+        return createNewDataSourceForPort(5432);
     }
 
-    private static DataSource createNewDataSource(int port) {
+    private static DataSource createNewDataSourceForPort(int port) {
         var dsp = new DataSourceProperties();
         dsp.setUsername("user");
         dsp.setPassword("pw");
