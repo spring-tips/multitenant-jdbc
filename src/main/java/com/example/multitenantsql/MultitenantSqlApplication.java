@@ -1,6 +1,7 @@
 package com.example.multitenantsql;
 
 import com.zaxxer.hikari.HikariDataSource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
@@ -72,8 +73,8 @@ class SecurityConfiguration {
 
     @Bean
     UserDetailsService userDetailsService() {
-        var rob = this.createUser("rwinch", "pw", 1);
-        var josh = this.createUser("jlong", "pw", 2);
+        var rob = this.createUser("rwinch", 1);
+        var josh = this.createUser("jlong", 2);
         var users = Stream.of(josh, rob)
                 .collect(Collectors.toMap(User::getUsername, user -> user));
         return username -> {
@@ -83,8 +84,8 @@ class SecurityConfiguration {
         };
     }
 
-    private User createUser(String user, String pw, Integer tenantId) {
-        return new MultitenantUser(user, pw, true, true, true, true, List.of(new SimpleGrantedAuthority("USER")), tenantId);
+    private User createUser(String user, Integer tenantId) {
+        return new MultitenantUser(user, "pw", true, true, true, true, List.of(new SimpleGrantedAuthority("USER")), tenantId);
     }
 
     static class MultitenantUser extends User {
@@ -105,6 +106,7 @@ class SecurityConfiguration {
 
 }
 
+@Slf4j
 @Configuration
 class DataSourceConfiguration {
 
@@ -127,6 +129,7 @@ class DataSourceConfiguration {
                     new ClassPathResource("schema.sql"),
                     new ClassPathResource(prefix + tenantId + "-data.sql"));
             initializer.execute((DataSource) ds);
+            log.info("initialized dataSource for tenant # {}", tenantId);
         });
         var mds = new MultitenantDataSource();
         mds.setTargetDataSources(map);
