@@ -25,7 +25,6 @@ import org.springframework.web.servlet.function.RouterFunction;
 import org.springframework.web.servlet.function.ServerResponse;
 
 import javax.sql.DataSource;
-import java.security.Principal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -50,11 +49,6 @@ public class MultitenantSqlApplication {
     @Bean
     RouterFunction<ServerResponse> routes(JdbcTemplate template) {
         return route()
-                .GET("/hello", request -> {
-                    var name = request.principal().map(Principal::getName).get();
-                    var map = Map.of("greetings", "Hello, " + name + "!");
-                    return ServerResponse.ok().body(map);
-                })
                 .GET("/customers", request -> {
                     var results = template
                             .query("select * from customer", (rs, i) -> new Customer(rs.getInt("id"), rs.getString("name")));
@@ -62,8 +56,9 @@ public class MultitenantSqlApplication {
                 })
                 .build();
     }
+}
 
-
+record Customer(Integer id, String name) {
 }
 
 @Configuration
@@ -111,10 +106,15 @@ class SecurityConfiguration {
         }
     }
 
+}
+
+@Configuration
+class DataSourceConfiguration {
+
+
     @Bean
     @Primary
-    MultitenantRoutingDataSource multitenantDataSource(Map<String, DataSource> dataSources) {
-
+    MultitenantDataSource multitenantDataSource(Map<String, DataSource> dataSources) {
         var prefix = "ds";
         var map = dataSources
                 .entrySet()
@@ -126,30 +126,30 @@ class SecurityConfiguration {
                     var num = Integer.parseInt(part);
                     return (Object) num;
                 }, e -> (Object) e.getValue()));
-        map.forEach((indx, ds) -> {
+        map.forEach((tenantId, ds) -> {
             var initializer = new ResourceDatabasePopulator(
                     new ClassPathResource("schema.sql"),
-                    new ClassPathResource(prefix + indx + "-data.sql"));
+                    new ClassPathResource(prefix + tenantId + "-data.sql"));
             initializer.execute((DataSource) ds);
-            System.out.println("initialized " + indx);
+            System.out.println("initialized " + tenantId);
         });
         System.out.println("there are " + map.size() + " dataSources");
-        var mds = new MultitenantRoutingDataSource();
+        var mds = new MultitenantDataSource();
         mds.setTargetDataSources(map);
         return mds;
     }
 
     @Bean
     DataSource ds1() {
-        return this.createNewDataSource(5431);
+        return createNewDataSource(5431);
     }
 
     @Bean
     DataSource ds2() {
-        return this.createNewDataSource(5432);
+        return createNewDataSource(5432);
     }
 
-    private DataSource createNewDataSource(int port) {
+    private static DataSource createNewDataSource(int port) {
         var dsp = new DataSourceProperties();
         dsp.setUsername("user");
         dsp.setPassword("pw");
@@ -160,8 +160,7 @@ class SecurityConfiguration {
                 .build();
     }
 
-
-    static private class MultitenantRoutingDataSource extends AbstractRoutingDataSource {
+    private static class MultitenantDataSource extends AbstractRoutingDataSource {
 
         private final AtomicBoolean initialized = new AtomicBoolean();
 
@@ -175,7 +174,7 @@ class SecurityConfiguration {
         @Override
         protected Object determineCurrentLookupKey() {
             var auth = SecurityContextHolder.getContext().getAuthentication();
-            if (auth != null && auth.getPrincipal() instanceof MultitenantUser user) {
+            if (auth != null && auth.getPrincipal() instanceof SecurityConfiguration.MultitenantUser user) {
                 var tenantId = user.getTenantId();
                 System.out.println("  " + user.getUsername() + " / " + tenantId);
                 return tenantId;
@@ -183,7 +182,5 @@ class SecurityConfiguration {
             return null;
         }
     }
-}
 
-record Customer(Integer id, String name) {
 }
