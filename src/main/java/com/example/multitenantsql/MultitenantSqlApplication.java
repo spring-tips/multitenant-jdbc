@@ -27,11 +27,12 @@ import org.springframework.web.servlet.function.ServerResponse;
 
 import javax.sql.DataSource;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static org.springframework.security.config.Customizer.withDefaults;
 import static org.springframework.web.servlet.function.RouterFunctions.route;
@@ -75,17 +76,20 @@ class SecurityConfiguration {
     UserDetailsService userDetailsService() {
         var rob = this.createUser("rwinch", 1);
         var josh = this.createUser("jlong", 2);
-        var users = Stream.of(josh, rob)
-                .collect(Collectors.toMap(User::getUsername, user -> user));
+
+        var users = new HashMap<String, Supplier<User>>();
+        users.put("rwinch", rob);
+        users.put("jlong", josh);
+
         return username -> {
             var user = users.getOrDefault(username, null);
             if (user == null) throw new UsernameNotFoundException("couldn't find the user '" + username + "'");
-            return user;
+            return user.get();
         };
     }
 
-    private User createUser(String user, Integer tenantId) {
-        return new MultitenantUser(user, "pw", true, true, true, true, List.of(new SimpleGrantedAuthority("USER")), tenantId);
+    private Supplier<User> createUser(String user, Integer tenantId) {
+        return () -> new MultitenantUser(user, "pw", true, true, true, true, List.of(new SimpleGrantedAuthority("USER")), tenantId);
     }
 
     static class MultitenantUser extends User {
